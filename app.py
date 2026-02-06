@@ -3,27 +3,41 @@ import pandas as pd
 import os
 import requests
 import re
+import datetime
 
 # ==========================================
 # 1. 基础配置
 # ==========================================
-st.set_page_config(page_title="B站内容决策看板", layout="wide")
-st.title("🎬 博主数据 PK 擂台：内容规律深度洞察")
+st.set_page_config(page_title="B站内容决策看板 V2.0", layout="wide")
+st.title("🎬 B站数据大脑 V2.0：RTX 4060 算力增强版")
 
-# --- 修复 1：Ollama 超时时间延长至 300秒 ---
+# --- V2.0 新增：去 AI 化的人设指令 ---
+SYSTEM_PROMPT = """
+你现在是一个硬核 B 站内容架构师。你的合作伙伴是一名身高 180cm、主修数据科学的大学生。
+写作限制：
+1. 绝对禁止使用：'在这个数字化时代'、'总之'、'综上所述'、'不仅...而且'等典型 AI 套话。
+2. 语气风格：极客、冷幽默、专业、直给。
+3. 术语要求：必须穿插数据科学专业词汇（如：维度拆解、异常值、权重、样本量），显得很内行。
+4. 视角：保持 180cm 的第一人称视角，不要有说教感。
+"""
+
+# --- 核心工具函数 ---
 def call_ollama(model_name, prompt):
     url = "http://localhost:11434/api/generate"
+    # 将人设指令和用户请求合并
+    full_prompt = f"{SYSTEM_PROMPT}\n\n任务内容：\n{prompt}"
+    
     payload = {
         "model": model_name,
-        "prompt": prompt,
+        "prompt": full_prompt,
         "stream": False
     }
     try:
-        # 设置 300秒 (5分钟) 超时，防止 4060 思考太久报错
+        # 300秒超时保护
         response = requests.post(url, json=payload, timeout=300)
         return response.json().get('response', "AI 思考超时，未返回结果...")
     except requests.exceptions.ReadTimeout:
-        return "❌ AI 思考超时 (超过5分钟)，建议检查显卡显存占用。"
+        return "❌ RTX 4060 显存高负载，思考超时 (超过5分钟)。"
     except Exception as e:
         return f"❌ 连接 Ollama 失败: {str(e)}"
 
@@ -45,9 +59,9 @@ def clean_num(val):
         return float(res) if res else 0
     except: return 0
 
-# --- 修复 2：缺数据也能算的“强力加载器” ---
 @st.cache_data
 def load_data(file_name):
+    # 你的 M 盘路径逻辑保持不变
     file_path = os.path.join(r'M:\My_DS_Lab\data', file_name)
     if not os.path.exists(file_path): return None
     
@@ -67,34 +81,27 @@ def load_data(file_name):
     t_col = find_col(['标题', 'title'])
     d_col = find_col(['时长', 'time', 'duration'])
 
-    # 1. 只有找不到播放量时才算失败
     if not v_col:
-        st.sidebar.error(f"❌ 文件 {file_name} 严重损坏：找不到播放量！")
+        st.sidebar.error(f"❌ 文件 {file_name} 损坏：缺失播放量")
         return None
 
-    # 2. 数据清洗
     df['播放量'] = df[v_col].apply(clean_num)
-
-    # 3. 【核心修复】智能互动率计算（有点赞用点赞，没点赞只用评论）
     likes = df[l_col].apply(clean_num) if l_col else 0
     comms = df[c_col].apply(clean_num) if c_col else 0
     
-    # 诊断提示：如果缺失点赞，给用户一个提示，但不要报错
     if l_col is None:
-        st.sidebar.warning(f"⚠️ {file_name} 缺失点赞数据，互动率将仅基于评论计算。")
+        st.sidebar.warning(f"⚠️ {file_name} 缺失点赞，仅用评论计算互动。")
 
-    # 计算公式：(点赞+评论)/播放量。如果点赞是0，就变成了 评论/播放量
     df['互动率'] = ((likes + comms) / df['播放量'].replace(0, 1)) * 100
-
     df['总秒数'] = df[d_col].apply(convert_time) if d_col else 0
     df['标题'] = df[t_col] if t_col else "未知标题"
     
     return df
 
 # ==========================================
-# 2. 侧边栏
+# 2. 侧边栏 (新增数据洞察输入)
 # ==========================================
-st.sidebar.header("🥊 擂台选手选择")
+st.sidebar.header("🥊 擂台控制台")
 data_dir = r'M:\My_DS_Lab\data'
 
 if os.path.exists(data_dir):
@@ -103,6 +110,12 @@ if os.path.exists(data_dir):
 else:
     st.error("无法访问 M 盘，请确认 U 盘已插入！")
     selected_files = []
+
+st.sidebar.divider()
+st.sidebar.subheader("🧠 创作上下文 (给AI的)")
+# 这里把你的 0.15% 发现作为默认值，真正实现数据驱动 AI
+default_insight = "发现长视频的互动率普遍偏低（约0.15%），需要开头设置强悬念，且评论区互动引导至关重要。"
+user_insight = st.sidebar.text_area("输入数据洞察", default_insight, height=100)
 
 # ==========================================
 # 3. 主逻辑
@@ -118,69 +131,74 @@ if selected_files:
     if combined_data:
         all_df = pd.concat(combined_data)
         
-        # 筛选器
-        st.sidebar.divider()
-        st.sidebar.subheader("🔥 爆款雷达设定")
-        min_play = st.sidebar.slider("最小播放量 (万)", 0, 1000, 10, key="play_filter") * 10000
-        
+        # --- 图表区域 (保持不变) ---
+        st.subheader("🔥 爆款雷达")
+        min_play = st.slider("最小播放量 (万)", 0, 1000, 10) * 10000
         filtered_df = all_df[all_df['播放量'] >= min_play]
-        st.info(f"🔎 已为您发现 {len(filtered_df)} 条‘高曝光’视频。")
-
-        # 核心指标看板
-        st.subheader("📊 核心数据概览")
+        
         cols = st.columns(len(selected_files))
         for i, f in enumerate(selected_files):
             name = f.replace('.csv', '').replace('_videos', '')
             stats = all_df[all_df['博主'] == name]
-            
             if not stats.empty:
-                avg_play = int(stats['播放量'].mean())
-                avg_rate = stats['互动率'].mean()
-                cols[i].metric(f"{name} 平均播放", f"{avg_play:,}")
-                # 提示用户如果数值偏低是因为只有评论
-                cols[i].metric(f"{name} 平均互动率", f"{avg_rate:.2f}%")
-            else:
-                cols[i].warning(f"⚠️ {name} 无数据")
+                cols[i].metric(f"{name} 平均播放", f"{int(stats['播放量'].mean()):,}")
+                cols[i].metric(f"{name} 互动率", f"{stats['互动率'].mean():.2f}%")
 
-        # 图表区
-        st.subheader("🎯 筛选后的分布对比")
         if not filtered_df.empty:
             st.scatter_chart(data=filtered_df, x='总秒数', y='互动率', color='博主')
             
-            st.subheader("📜 爆款视频明细")
-            st.dataframe(filtered_df[['标题', '播放量', '互动率', '时长']], use_container_width=True)
-            
-            # 导出按钮
-            st.sidebar.divider()
-            if st.sidebar.button("📦 导出本次爆款报告"):
-                output_path = r'M:\My_DS_Lab\output\hot_videos_report.csv'
-                if not os.path.exists(r'M:\My_DS_Lab\output'):
-                    os.makedirs(r'M:\My_DS_Lab\output')
-                filtered_df.to_csv(output_path, index=False, encoding='utf-8-sig')
-                st.sidebar.success(f"✅ 报告已存入 U 盘：\n{output_path}")
-
-            # AI 分析
+            # --- V2.0 核心升级：交互式剧本工作台 ---
             st.divider()
-            st.header("🤖 AI 爆款剧本策略分析")
+            st.header("🤖 Stage 2: DeepSeek 剧本工坊")
             
-            top_5_titles = filtered_df.sort_values('播放量', ascending=False)['标题'].head(5).tolist()
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                # 获取播放量最高的标题作为参考
+                top_title = filtered_df.sort_values('播放量', ascending=False).iloc[0]['标题']
+                target_topic = st.text_input("想拍什么主题？(直接输入或参考下方爆款)", value=f"对标爆款：{top_title}")
+                
+            with col2:
+                st.write("") # 占位
+                st.write("") 
+                start_btn = st.button("🚀 启动 4060 生成剧本", use_container_width=True)
 
-            if st.button("✨ 召唤本地 DeepSeek 深度拆解"):
-                if top_5_titles:
-                    with st.spinner("RTX 4060 正在分析中，本次超时上限已调至 5 分钟，请耐心等待..."):
-                        my_prompt = f"""
-                        你是一位高级新媒体导演。基于以下爆款标题列表：
-                        {top_5_titles}
-                        请为我策划一个20分钟视频的脚本大纲。
-                        要求：
-                        1. 风格对标影视飓风，包含数据分析的硬核感。
-                        2. 总结这几个标题的共同爆点逻辑。
-                        """
-                        result = call_ollama("deepseek-r1:7b", my_prompt)
-                        st.markdown(result)
-                else:
-                    st.warning("⚠️ 筛选结果为空，无法分析。")
+            if start_btn:
+                with st.spinner("DeepSeek-R1 正在进行思维链推导 (Chain of Thought)..."):
+                    # 构建复杂的 Prompt
+                    script_prompt = f"""
+                    基于数据洞察：{user_insight}
+                    
+                    视频主题：{target_topic}
+                    
+                    请产出一份【分镜级】视频脚本大纲，包含以下模块：
+                    1. 【钩子 (0-30秒)】：利用数据中的异常点设计开头，必须抓住眼球。
+                    2. 【反直觉分析】：为什么这个数据和普通人想的不一样？
+                    3. 【硬核拆解】：分3个维度推演，使用数据科学术语。
+                    4. 【互动指令】：针对低互动率问题，设计具体的弹幕/评论引导话术。
+                    """
+                    
+                    result = call_ollama("deepseek-r1:7b", script_prompt)
+                    
+                    # 存入 Session State 防止刷新丢失
+                    st.session_state['generated_script'] = result
+                    st.session_state['script_topic'] = target_topic
+                    st.success("✅ 剧本生成完毕！")
+
+            # --- 结果展示与导出模块 ---
+            if 'generated_script' in st.session_state:
+                st.markdown("### 📝 剧本预览")
+                st.markdown(st.session_state['generated_script'])
+                
+                # 导出按钮
+                st.download_button(
+                    label="📥 导出为 Markdown (发给剪辑/手机看)",
+                    data=st.session_state['generated_script'],
+                    file_name=f"Script_{datetime.date.today()}_{st.session_state.get('script_topic', 'demo')}.md",
+                    mime="text/markdown"
+                )
+
         else:
-            st.warning("⚠️ 当前筛选条件下没有视频，请调低滑块。")
+            st.warning("⚠️ 没有筛选到视频，请调整上方滑块。")
 else:
-    st.info("请在左侧选择 CSV 文件开始分析。")
+    st.info("👈 请在左侧 M 盘加载数据")
