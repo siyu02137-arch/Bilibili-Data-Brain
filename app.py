@@ -24,7 +24,6 @@ SYSTEM_PROMPT = """
 # --- 核心工具函数 ---
 def call_ollama(model_name, prompt):
     url = "http://localhost:11434/api/generate"
-    # 将人设指令和用户请求合并
     full_prompt = f"{SYSTEM_PROMPT}\n\n任务内容：\n{prompt}"
     
     payload = {
@@ -33,7 +32,6 @@ def call_ollama(model_name, prompt):
         "stream": False
     }
     try:
-        # 300秒超时保护
         response = requests.post(url, json=payload, timeout=300)
         return response.json().get('response', "AI 思考超时，未返回结果...")
     except requests.exceptions.ReadTimeout:
@@ -61,7 +59,6 @@ def clean_num(val):
 
 @st.cache_data
 def load_data(file_name):
-    # 你的 M 盘路径逻辑保持不变
     file_path = os.path.join(r'M:\My_DS_Lab\data', file_name)
     if not os.path.exists(file_path): return None
     
@@ -81,17 +78,12 @@ def load_data(file_name):
     t_col = find_col(['标题', 'title'])
     d_col = find_col(['时长', 'time', 'duration'])
 
-    if not v_col:
-        st.sidebar.error(f"❌ 文件 {file_name} 损坏：缺失播放量")
-        return None
+    if not v_col: return None
 
     df['播放量'] = df[v_col].apply(clean_num)
     likes = df[l_col].apply(clean_num) if l_col else 0
     comms = df[c_col].apply(clean_num) if c_col else 0
     
-    if l_col is None:
-        st.sidebar.warning(f"⚠️ {file_name} 缺失点赞，仅用评论计算互动。")
-
     df['互动率'] = ((likes + comms) / df['播放量'].replace(0, 1)) * 100
     df['总秒数'] = df[d_col].apply(convert_time) if d_col else 0
     df['标题'] = df[t_col] if t_col else "未知标题"
@@ -99,7 +91,7 @@ def load_data(file_name):
     return df
 
 # ==========================================
-# 2. 侧边栏 (新增数据洞察输入)
+# 2. 侧边栏
 # ==========================================
 st.sidebar.header("🥊 擂台控制台")
 data_dir = r'M:\My_DS_Lab\data'
@@ -112,9 +104,8 @@ else:
     selected_files = []
 
 st.sidebar.divider()
-st.sidebar.subheader("🧠 创作上下文 (给AI的)")
-# 这里把你的 0.15% 发现作为默认值，真正实现数据驱动 AI
-default_insight = "发现长视频的互动率普遍偏低（约0.15%），需要开头设置强悬念，且评论区互动引导至关重要。"
+st.sidebar.subheader("🧠 创作上下文")
+default_insight = "发现长视频的互动率普遍偏低（约0.15%），需要开头设置强悬念。"
 user_insight = st.sidebar.text_area("输入数据洞察", default_insight, height=100)
 
 # ==========================================
@@ -131,7 +122,7 @@ if selected_files:
     if combined_data:
         all_df = pd.concat(combined_data)
         
-        # --- 图表区域 (保持不变) ---
+        # --- 补全：爆款雷达与数据指标 ---
         st.subheader("🔥 爆款雷达")
         min_play = st.slider("最小播放量 (万)", 0, 1000, 10) * 10000
         filtered_df = all_df[all_df['播放量'] >= min_play]
@@ -147,58 +138,60 @@ if selected_files:
         if not filtered_df.empty:
             st.scatter_chart(data=filtered_df, x='总秒数', y='互动率', color='博主')
             
-            # --- V2.0 核心升级：交互式剧本工作台 ---
+            # --- V2.1 词频挖掘机 ---
+            st.divider()
+            st.subheader("🔍 爆款标题流量密码")
+            all_titles = " ".join(filtered_df['标题'].astype(str).tolist())
+            found_words = re.findall(r'[\u4e00-\u9fa5]{2,4}', all_titles)
+            
+            if found_words:
+                from collections import Counter
+                stop_words = ['视频', '我们', '一个', '这个', '什么']
+                valid_words = [w for w in found_words if w not in stop_words]
+                common_tags = Counter(valid_words).most_common(12)
+                tag_cols = st.columns(6)
+                for idx, (word, count) in enumerate(common_tags):
+                    tag_cols[idx % 6].button(f"{word}\n({count})", key=f"btn_{word}")
+            else:
+                st.info("💡 正在等待更多数据以开启词频分析...")
+
+            # --- Stage 2: DeepSeek 剧本工坊 ---
             st.divider()
             st.header("🤖 Stage 2: DeepSeek 剧本工坊")
             
             col1, col2 = st.columns([2, 1])
-            
             with col1:
-                # 获取播放量最高的标题作为参考
                 top_title = filtered_df.sort_values('播放量', ascending=False).iloc[0]['标题']
-                target_topic = st.text_input("想拍什么主题？(直接输入或参考下方爆款)", value=f"对标爆款：{top_title}")
-                
+                target_topic = st.text_input("想拍什么主题？", value=f"对标爆款：{top_title}")
             with col2:
-                st.write("") # 占位
-                st.write("") 
+                st.write("")
+                st.write("")
                 start_btn = st.button("🚀 启动 4060 生成剧本", use_container_width=True)
 
             if start_btn:
-                with st.spinner("DeepSeek-R1 正在进行思维链推导 (Chain of Thought)..."):
-                    # 构建复杂的 Prompt
-                    script_prompt = f"""
-                    基于数据洞察：{user_insight}
-                    
-                    视频主题：{target_topic}
-                    
-                    请产出一份【分镜级】视频脚本大纲，包含以下模块：
-                    1. 【钩子 (0-30秒)】：利用数据中的异常点设计开头，必须抓住眼球。
-                    2. 【反直觉分析】：为什么这个数据和普通人想的不一样？
-                    3. 【硬核拆解】：分3个维度推演，使用数据科学术语。
-                    4. 【互动指令】：针对低互动率问题，设计具体的弹幕/评论引导话术。
-                    """
-                    
+                with st.spinner("DeepSeek-R1 正在推导中..."):
+                    script_prompt = f"基于洞察：{user_insight}\n视频主题：{target_topic}\n请产出【分镜级】剧本大纲。"
                     result = call_ollama("deepseek-r1:7b", script_prompt)
-                    
-                    # 存入 Session State 防止刷新丢失
                     st.session_state['generated_script'] = result
                     st.session_state['script_topic'] = target_topic
-                    st.success("✅ 剧本生成完毕！")
 
-            # --- 结果展示与导出模块 ---
             if 'generated_script' in st.session_state:
                 st.markdown("### 📝 剧本预览")
                 st.markdown(st.session_state['generated_script'])
                 
-                # 导出按钮
-                st.download_button(
-                    label="📥 导出为 Markdown (发给剪辑/手机看)",
-                    data=st.session_state['generated_script'],
-                    file_name=f"Script_{datetime.date.today()}_{st.session_state.get('script_topic', 'demo')}.md",
-                    mime="text/markdown"
-                )
+                # 自动保存备份逻辑
+                script_content = st.session_state['generated_script']
+                script_name = f"Script_{st.session_state.get('script_topic', 'idea')[:10]}.md"
+                save_path = os.path.join(r'M:\My_DS_Lab\scripts', script_name)
+                
+                try:
+                    if not os.path.exists(r'M:\My_DS_Lab\scripts'): os.makedirs(r'M:\My_DS_Lab\scripts')
+                    with open(save_path, "w", encoding="utf-8") as f: f.write(script_content)
+                    st.sidebar.success(f"📂 已备份至：{save_path}")
+                except: pass
 
+                st.download_button("📥 点击下载剧本", data=script_content, file_name=script_name)
         else:
-            st.warning("⚠️ 没有筛选到视频，请调整上方滑块。")
+            st.warning("⚠️ 筛选结果为空，请调低播放量滑块。")
 else:
-    st.info("👈 请在左侧 M 盘加载数据")
+    st.info("👈 请在左侧选择博主数据开始分析")
